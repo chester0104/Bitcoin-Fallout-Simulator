@@ -155,7 +155,7 @@ NavMeshAgent:
   m_Enabled: 1
   m_AgentTypeID: 0
   m_Radius: 0.5
-  m_Speed: 20
+  m_Speed: 10
   m_Acceleration: 8
   avoidancePriority: 50
   m_AngularSpeed: 120
@@ -205,6 +205,16 @@ MonoBehaviour:
   minDistance: 2
   damageValue: 15
   attackCooldown: 3
+  dashSpeed: 10
+  dashDuration: 0.5
+  dashCooldown: 5
+  dashChance: 0.3
+  jumpForce: 8
+  jumpCooldown: 3
+  heightDifferenceThreshold: 1.5
+  groundLayer:
+    serializedVersion: 2
+    m_Bits: 1
   health: 75
   maxHealth: 75
   cheese: {fileID: 2681027152912150528, guid: ba79a4a8c99b75844a288e09b8ed12c4, type: 3}

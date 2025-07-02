@@ -205,6 +205,16 @@ MonoBehaviour:
   minDistance: 10
   damageValue: 100
   attackCooldown: 10
+  dashSpeed: 10
+  dashDuration: 0.5
+  dashCooldown: 5
+  dashChance: 0.3
+  jumpForce: 8
+  jumpCooldown: 3
+  heightDifferenceThreshold: 1.5
+  groundLayer:
+    serializedVersion: 2
+    m_Bits: 1
   health: 500
   maxHealth: 500
   cheese: {fileID: 2681027152912150528, guid: ba79a4a8c99b75844a288e09b8ed12c4, type: 3}

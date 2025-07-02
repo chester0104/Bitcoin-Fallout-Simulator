@@ -20,11 +20,30 @@ public class EnemyBehavior : MonoBehaviour
     private bool isAttacking = false;
     private float lastAttackTime = -Mathf.Infinity;
 
+    [Header("Dash Settings")]
+    public float dashSpeed = 10f;
+    public float dashDuration = 0.5f;
+    public float dashCooldown = 5f;
+    public float dashChance = 0.3f; // 30% chance to dash when chasing
+    private float lastDashTime = -Mathf.Infinity;
+    private bool isDashing = false;
+
+    [Header("Jump Settings")]
+    public float jumpForce = 8f;
+    public float jumpCooldown = 3f;
+    public float heightDifferenceThreshold = 1.5f; // Minimum height difference to trigger jump
+    public LayerMask groundLayer = 1; // Ground layer for jump detection
+    private float lastJumpTime = -Mathf.Infinity;
+    private bool isJumping = false;
+    private bool isGrounded = true;
+    private Rigidbody rb;
+
     [Header("Health & Death Settings")]
     public int health = 100;
     public int maxHealth = 100;
     public GameObject cheese;
     public GameObject apple;
+
     [Header("General Settings")]
     public int XPValue = 10;
     private Transform playerTransform;
@@ -42,6 +61,13 @@ public class EnemyBehavior : MonoBehaviour
     {
         animator = GetComponent<Animator>();
         agent = GetComponent<NavMeshAgent>();
+        rb = GetComponent<Rigidbody>();
+
+        if (rb == null)
+        {
+            rb = gameObject.AddComponent<Rigidbody>();
+            rb.freezeRotation = true;
+        }
 
         playerObject = GameObject.FindGameObjectWithTag("Player");
         if (playerObject)
@@ -55,9 +81,16 @@ public class EnemyBehavior : MonoBehaviour
     {
         if (isDying || deathProcessed) return;
 
-        // Make enemy always face the player
-        if (playerTransform)
-            transform.LookAt(playerTransform);
+        if (transform.position.y < -15f)
+        {
+            DestroyEnemy();
+            return;
+        }
+
+        CheckGrounded();
+
+        if (playerTransform && !isJumping)
+            transform.LookAt(new Vector3(playerTransform.position.x, transform.position.y, playerTransform.position.z));
 
         switch (currentState)
         {
@@ -71,7 +104,6 @@ public class EnemyBehavior : MonoBehaviour
                 Attack();
                 break;
             case EnemyState.Stunned:
-                // Do nothing while stunned
                 break;
             case EnemyState.Die:
                 if (!isDying && !deathProcessed)
@@ -84,9 +116,23 @@ public class EnemyBehavior : MonoBehaviour
         }
     }
 
+    void CheckGrounded()
+    {
+        // Ground detection using raycast slightly above enemy position 
+        RaycastHit hit;
+        float rayDistance = 0.1f;
+        Vector3 rayOrigin = transform.position + Vector3.up * 0.1f;
+        // This prevents false positives from ground collision while maintaining accurate detection for jump state management
+        isGrounded = Physics.Raycast(rayOrigin, Vector3.down, out hit, rayDistance + 0.1f, groundLayer);
+
+        if (isJumping && isGrounded)
+        {
+            isJumping = false;
+        }
+    }
+
     void SetupPatrolPoints()
     {
-        // Create a square patrol pattern around the starting position
         patrolPoints = new Vector3[4];
         patrolPoints[0] = patrolCenter + new Vector3(-5, 0, -5);
         patrolPoints[1] = patrolCenter + new Vector3(5, 0, -5);
@@ -100,18 +146,16 @@ public class EnemyBehavior : MonoBehaviour
             SetupPatrolPoints();
 
         Vector3 targetPoint = patrolPoints[currentPatrolIndex];
-        SetAnimationState(0); // 0 = Idle animation
+        SetAnimationState(0);
 
         if (Vector3.Distance(transform.position, targetPoint) > 0.5f)
         {
-            // Move towards the current patrol point at half speed
             float step = moveSpeed * 0.5f * Time.deltaTime;
             transform.position = Vector3.MoveTowards(transform.position, targetPoint, step);
             transform.LookAt(targetPoint);
         }
         else
         {
-            // Move to next patrol point in sequence
             currentPatrolIndex = (currentPatrolIndex + 1) % patrolPoints.Length;
         }
     }
@@ -120,24 +164,107 @@ public class EnemyBehavior : MonoBehaviour
     {
         if (!playerTransform) return;
 
-        SetAnimationState(1); // 1 = Walk animation
-
+        SetAnimationState(1);
         float distance = Vector3.Distance(transform.position, playerTransform.position);
+        float heightDifference = playerTransform.position.y - transform.position.y;
 
-        if (distance > minDistance)
+        /* Jump behavior: Trigger when player is significantly higher and enemy is grounded
+         * Includes cooldown and state checks to prevent conflicts with dash or other actions */
+        if (heightDifference > heightDifferenceThreshold && isGrounded &&
+            Time.time - lastJumpTime >= jumpCooldown && !isJumping && !isDashing)
         {
-            // Move to a position that's minDistance away from player
+            PerformJump();
+        }
+
+        // Dash behavior: Random chance per frame scaled by deltaTime for consistent probability
+        if (Time.time - lastDashTime >= dashCooldown && !isDashing && !isJumping &&
+            Random.Range(0f, 1f) < dashChance * Time.deltaTime && distance > minDistance)
+        {
+            PerformDash();
+        }
+        // Only triggers when not performing other actions and player is beyond attack range
+        if (distance > minDistance && !isDashing)
+        {
             Vector3 direction = (transform.position - playerTransform.position).normalized;
             Vector3 stopPosition = playerTransform.position + direction * minDistance;
             agent.SetDestination(stopPosition);
         }
-        else
+        else if (!isDashing)
         {
             agent.ResetPath();
-            // Check if player is alive before attacking
             bool playerAlive = PlayerHealth.IsAlive;
             currentState = playerAlive ? EnemyState.Attack : EnemyState.Die;
         }
+    }
+
+    void PerformJump()
+    {
+        if (!isGrounded || isJumping) return;
+
+        lastJumpTime = Time.time;
+        isJumping = true;
+
+        // Temporarily disable NavMeshAgent during jump to allow physics-based movement
+        if (agent && agent.enabled)
+        {
+            agent.enabled = false;
+        }
+        // This prevents conflicts between AI pathfinding and Rigidbody physics
+        rb.linearVelocity = new Vector3(rb.linearVelocity.x, jumpForce, rb.linearVelocity.z);
+
+        Vector3 directionToPlayer = (playerTransform.position - transform.position).normalized;
+        rb.linearVelocity += new Vector3(directionToPlayer.x * moveSpeed, 0, directionToPlayer.z * moveSpeed);
+
+        StartCoroutine(JumpCoroutine());
+    }
+
+    IEnumerator JumpCoroutine()
+    {
+        yield return new WaitForSeconds(0.1f);
+
+        // Wait for enemy to land before re-enabling NavMeshAgent
+        // This ensures smooth transition back to AI-controlled movement
+        while (!isGrounded)
+        {
+            yield return new WaitForFixedUpdate();
+        }
+
+        if (agent && !agent.enabled && !isDying && !deathProcessed)
+        {
+            agent.enabled = true;
+        }
+
+        isJumping = false;
+    }
+
+    void PerformDash()
+    {
+        if (isDashing || !playerTransform) return;
+
+        lastDashTime = Time.time;
+        isDashing = true;
+
+        StartCoroutine(DashCoroutine());
+    }
+
+    IEnumerator DashCoroutine()
+    {
+        float originalSpeed = agent.speed;
+        agent.speed = dashSpeed;
+
+        Vector3 dashTarget = playerTransform.position;
+        agent.SetDestination(dashTarget);
+        SetAnimationState(1);
+
+        float dashTimer = 0f;
+        while (dashTimer < dashDuration)
+        {
+            dashTimer += Time.deltaTime;
+            yield return null;
+        }
+
+        agent.speed = originalSpeed;
+        isDashing = false;
     }
 
     void Attack()
@@ -146,22 +273,19 @@ public class EnemyBehavior : MonoBehaviour
 
         float distance = Vector3.Distance(transform.position, playerTransform.position);
 
-        // If player moved too far away, switch back to chase
         if (distance > minDistance)
         {
             currentState = EnemyState.Chase;
             return;
         }
 
-        SetAnimationState(2); // 2 = Attack animation
+        SetAnimationState(2);
 
-        // Check if enough time has passed since last attack
         if (Time.time - lastAttackTime >= attackCooldown)
         {
             lastAttackTime = Time.time;
             isAttacking = true;
 
-            // Deal damage to player
             PlayerHealth playerHealth = playerObject.GetComponent<PlayerHealth>();
             if (playerHealth)
                 playerHealth.TakeDamage(damageValue);
@@ -208,7 +332,7 @@ public class EnemyBehavior : MonoBehaviour
             }
 
             // Destroy enemy after brief delay
-                Invoke(nameof(DestroyEnemy), 0.1f);
+            Invoke(nameof(DestroyEnemy), 0.1f);
         }
         catch (System.Exception e)
         {
@@ -253,9 +377,12 @@ public class EnemyBehavior : MonoBehaviour
             stateBeforeStun = currentState;
 
         isStunned = true;
+        isDashing = false;
+        isJumping = false;
         currentState = EnemyState.Stunned;
 
-        // Completely disable NavMeshAgent
+        // Completely disable NavMeshAgent during stun to prevent movement
+        // Reset path and velocity to ensure immediate stop
         if (agent && agent.enabled)
         {
             agent.ResetPath();
@@ -263,15 +390,11 @@ public class EnemyBehavior : MonoBehaviour
             agent.enabled = false;
         }
 
-        // Stop any attack in progress
         isAttacking = false;
-
-        // Set stunned animation (using idle)
         SetAnimationState(0);
 
         yield return new WaitForSeconds(duration);
 
-        // Re-enable NavMeshAgent and return to previous state
         if (!isDying && !deathProcessed)
         {
             if (agent && !agent.enabled)
@@ -284,7 +407,6 @@ public class EnemyBehavior : MonoBehaviour
 
     private void SetAnimationState(int state)
     {
-        // Only update animation if state changed and enemy isn't dying
         if (animState != state && animator && !isDying)
         {
             animState = state;
@@ -294,17 +416,15 @@ public class EnemyBehavior : MonoBehaviour
 
     IEnumerator AttackCooldownCoroutine()
     {
-        // Wait for attack animation to complete
         yield return new WaitForSeconds(1.1f);
 
         if (isDying || deathProcessed) yield break;
 
         isAttacking = false;
-        SetAnimationState(0); // 0 = Idle animation
+        SetAnimationState(0);
 
         if (!playerTransform) yield break;
 
-        // Decide next state based on distance to player
         float distance = Vector3.Distance(transform.position, playerTransform.position);
         currentState = distance > minDistance ? EnemyState.Chase : EnemyState.Attack;
     }
